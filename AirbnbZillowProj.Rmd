@@ -1,0 +1,887 @@
+---
+title: "Capital One Data Challenge"
+output:
+  html_document:
+    code_folding: hide
+    indent: true
+---
+## New York City 2-Bedroom Short-term Investment Analysis {.tabset .tabset-fade}
+
+  
+### Problem & Data Quality Check
+
+
+**Business Problem**
+
+The goal for this data challenge is to find the most profitable short-term investment zipcodes for 2-bedroom apartment located in New York City. There are two datasets provided for this challenge: airbnb data recorded revenue information in New York City, and zillow dataset contains costs for zipcodes across the country. 
+  
+  I considered two scenarios for short-term investment:
+  
+  -Short-term that cannot break-even: this option is to consider investors who want to invest for very short time period, such as 2-5 years. For this option, investors may want higher net revenue rather than shorter break-even time and higher return rate. So we need to find zipcodes with **highest annual revenue**. 
+  
+  -Short-term that can break-even: longer time period but still within consideration for short-term investment, such as 10 or more years. For this option, we need to find zipcodes with **shortest break-even year and highest return rate**. This may also apply if extreme short-term investors are very sensitive to the total invested dollar amount.
+  
+  We will also look at property cost trend and sample size to minimize risks.
+  
+***
+
+**Data Quality Check**
+  
+The airbnb dataset represents revenue data and contains 48,895 observations and 106 variables; the zillow dataset represents cost data and contains 8,946 observations with 262 variables. I examined the data quality from five dimensions, as shown below.
+
+
+**Completeness**
+
+-Both datasets contain missing values and are not complete. In the airbnb dataset, there are 48,895 observations with 106 variables. Among all variables, there are about 13.16% missing data in total and 53 variables with missing value. 8 variables have more than 80% missing and 9 variables have more than 50% missing. These data cannot be computed using existing data because the missing value percentages are very significant. The reason for large percentage of missing value could be caused by ETL and data collection problem. Monthly price and weekly price have large percentage of missing value in this dataset and it could be that large amount of properties does not have discounted price for long term stay. The two most relevant variables with the business problem is the amount of bedrooms (variable bedrooms), zipcode information (variable zipcode) and they have 0.17% and 1.50% missing value. I computed the missing zipcode with mode zipcode in their neighborhood (variable neighbourhood_cleansed).
+  
+  
+-The Zillow dataset has 8,946 observations and 262 variables. Among all variables, there are 11.37% missing value in total, and most missing value come from time series cost recordings. I divided the variables into two sections: regular variables and time-series variables. The only regular variable has missing value in Zillow dataset is metro variable, and it only has 250 missing values (2.8%). The time-series variables contain properties price information from 1996/04 to 2017/06, and most missing data happens before 2010. There could be two reasons for the missing value. First, some properties might be built between 1996/04 and 2016/12 (last month that has missing value), and price information is not available when the properties hadn't been built. Second, some missing prices are prices in 1990s when data archive hadn't been digitalized and there could be lost of data because the time was too far to trace back. No matter which one is the actual reason to cause the missing value, I did not compute the missing value for the zillow dataset because the data are not very relevant to the business problem.
+&nbsp;
+
+**Uniqueness**
+
+-Some values in the datasets are not cleaned and represent same value. For instance, in the city variable in the airbnb dataset, there are multiple ways to show New York City, including "NYC", "new york" and etc. Same problem happens to state variable and other variables as well.
+
+
+
+&nbsp;
+
+**Timeliness**
+
+-Mismatch of time from zillow and airbnb dataset: The zillow dataset contains a series of properties' prices, but the most recent price information ends in 2017/06, which is more than two years from today. However, the airbnb dataset contains revenue information in 2019. Considering inflation and other factors that might cause the house price to change (more likely to increase), the mismatch of the timeline in these two dataset may causethe final computation for break-even year slightly shorter than it is. More data collection for cost data in 2018 and 2019 would solve the problem. 
+
+-Mismatch of time recorded: zillow dataset updated cost information every month from 1996-2017, whereas airbnb data represents revenue information in year 2019.
+&nbsp;
+
+**Validity**
+
+-The value in all variables matches the metadata description. Most variables in both datasets are represented in correct class, but some variables are in wrong data type. This problem mainly happens to variables should be numeric such as price variable in the airbnb dataset, but wrongly labeled as factor. I corrected some variables' class in the analysis. 
+&nbsp;
+
+**Accuracy**
+
+-Looking at summary statistics, most variables do not have significant problems, but there is an outlier in monthly reviews (variable reveiws_per_month), which has value of 58.5. The value is larger than 30 days so it could be a suspicious value. 
+&nbsp;
+-In the Airbnb dataset, some information was not recorded as their true value. For instance, in the city and state variables in Airbnb dataset, some values are not recorded as their correct value. Some observations located in the New York City were labeled in New Jersey.
+
+
+***
+
+**Environment Setup**
+
+The challenge used below packages:
+
+-data cleaning and munging: tidyverse, dplyr (contained within tidyverse), plyr, stringr (contained within tidyverse), lubridate, naniar
+
+-visualization: ggmap, ggplot2 (contained within tidyverse), leaflet, leaflet.extras, sp, ggrepel
+
+-formating and final presentation: grid, gridExtra, magrittr, rmarkdown, knitr
+
+
+
+**Function**
+
+-Wrote function **observe_var** to see unique, duplicate and missing values for selected variables
+
+
+
+
+```{r loading packages and read data, echo = T, results = 'hide',warning=FALSE,include=FALSE, message=FALSE}
+
+RequiredPackages <-
+  c(
+    "tidyverse",
+    "plyr",
+    "ggmap",
+    "lubridate",
+    "leaflet",
+    "leaflet.extras",
+    "magrittr",
+    "grid",
+    "gridExtra",
+    "sp",
+    "rmarkdown",
+    "ggrepel",
+    "knitr",
+    "naniar",
+    "htmlwidgets",
+    "cowplot"
+  )
+for (i in RequiredPackages) {
+  #Installs packages if not yet installed
+  if (!require(i, character.only = TRUE))
+    install.packages(i)
+}
+
+library(tidyverse)
+library(plyr)
+library(ggmap)
+library(lubridate)
+library(leaflet)
+library(leaflet.extras)
+library(magrittr)
+library(grid)
+library(gridExtra)
+library(sp)
+library(rmarkdown)
+library(ggrepel)
+library(knitr)
+library(naniar)
+library(htmlwidgets)
+library(cowplot)
+
+
+#read in the datasets, return NA for empty cells and NA value
+airbnb <-
+  read.csv(
+    "C:\\Users\\wangy\\Desktop\\C1\\listings.csv.gz",
+    header = T,
+    na.strings = c("", "NA")
+  )
+zillow <-
+  read.csv(
+    "C:\\Users\\wangy\\Desktop\\C1\\Zip_Zhvi_2bedroom.csv",
+    header = T,
+    na.strings = c("", "NA")
+  )
+
+
+```
+
+
+```{r observe datasets, warning=FALSE, message=FALSE, eval = FALSE}
+
+#observe summary statistics to see any unusual patterns in the data, stored as list s
+summary(airbnb)
+
+#1 property have more than 30 reviews a month, one extreme value at 58.50
+sort(unique(airbnb$reviews_per_month), decreasing = TRUE)
+
+#observe dimension for both dataset
+dim(airbnb)
+dim(zillow)
+
+#observe total missing value percentage for both datasets
+pct_miss(airbnb)
+pct_miss(zillow)
+
+
+#check whether there is nan in the datasets, return 0, no nan in the dataset
+sum(is.nan(as.matrix(airbnb)))
+sum(is.nan(as.matrix(zillow)))
+
+#observe missing percenrage
+airbnb_miss_pct<- miss_var_summary(airbnb)
+zillow_miss_pct<- miss_var_summary(zillow)
+
+```
+
+Looking at the raw data, there are two major problems for the datasets. First, there are lots of missing values in the data. Second, some variables have some suspicious record. For instance, in the airbnb dataset, there are an extreme value at 58.5 appears in the reviews per month variable. As there are only 30 or 31 days a month, we need to look more into the raw data.
+
+```{r visualize missing, warning=FALSE, message=FALSE}
+
+#look at missing value in the airbnb dataset, code partially from Jens Laufer online posting:  https://jenslaufer.com/data/analysis/visualize_missing_values_with_ggplot.html
+missing.values <- airbnb %>%
+  gather(key = "variable", value = "val") %>%
+  dplyr::mutate(isna = is.na(val)) %>%
+  dplyr::group_by(variable) %>%
+  dplyr::mutate(total = n()) %>%
+  dplyr::group_by(variable, total, isna) %>%
+  dplyr::summarise(num.isna = n()) %>%
+  dplyr::mutate(pct = num.isna / total * 100)
+
+
+
+levels <-
+  (missing.values  %>% filter(isna == T) %>% arrange(pct))$variable
+
+airbnb_percentage.plot <- missing.values %>%
+  ggplot() +
+  geom_bar(aes(
+    x = reorder(variable, pct),
+    y = pct,
+    fill = isna
+  ),
+  stat = 'identity',
+  alpha = 0.8) +
+  scale_x_discrete(limits = levels) +
+  scale_fill_manual(
+    name = "",
+    values = c('steelblue', 'tomato3'),
+    labels = c("Present", "Missing")
+  ) +
+  geom_hline(yintercept = 50) +
+  theme(axis.text.x = element_text(size = 8)) +
+  coord_flip() +
+  labs(title = "Airbnb Dataset Percentage of missing values", x =
+         'Variable Name', y = "% of Missing Values")
+
+airbnb_percentage.plot
+
+```
+
+
+Not all variables are related to this problem, I picked several variables that I might use in later analysis. The variables includes zipcode, price information and etc.
+
+One common variable that both datasets have is zipcode information (Zipcode in airbnb, RegionName in zillow). Let's take a look at the unique and duplicated value for some variables we may use in later analysis.
+
+```{r missing table, warning=FALSE, message=FALSE}
+#functions to observe data quality by variable
+
+observe_var <- function(x) {
+  Observation = length(x)
+  Unique = length(unique(x))
+  Missing = sum(is.na(x))
+  Duplicate = Observation - Unique - Missing
+  df2 <- data.frame()
+  df2 <- cbind(Observation, Unique, Duplicate, Missing)
+  return(df2)
+}
+
+#observe several variables for their unique and duplicate value
+#choose variables to observe
+airbnb_dq <- airbnb %>%
+  select(zipcode, price, weekly_price, monthly_price, neighbourhood_cleansed, neighbourhood_group_cleansed, state, bedrooms)
+
+#apply observe function to multiple variables
+airbnb_dq <- as.data.frame(cbind(map(airbnb_dq[1:8], observe_var)))
+
+#clean lists and convert all numbers to numeric format
+airbnb_dq <- airbnb_dq %>%
+  add_rownames(var = "Variable") %>%
+  mutate(Variable = as.character(Variable)) %>%
+  mutate(V1 = as.character(V1)) %>%
+  separate(
+    V1,
+    into = c('Observation', 'Unique', 'Duplicate', 'Missing'),
+    sep = ','
+  ) %>%
+  mutate(Observation = str_remove_all(Observation, "c\\(")) %>%
+  mutate(Missing = str_remove_all(Missing, "\\)"))
+
+airbnb_dq[2:5] <- lapply(airbnb_dq[2:5], as.numeric)
+
+#print table in nicer format when knitting in markdown file
+kable(airbnb_dq, caption = "Airbnb Related Variable Quality")
+```
+
+
+For zillow dataset, I divide the data quality check into two sections: 1. regular variables and 2. time series variables. Most missing value is from time series data and happened before 2010.
+
+```{r zillow missing table, warning=FALSE, message=FALSE}
+#observe variables in zillow dataset that are not time-series variable
+zillow_dq <-
+  as.data.frame(cbind(map(zillow[1:7], observe_var)))
+
+zillow_dq <- zillow_dq %>%
+  add_rownames(var = "Variable") %>%
+  mutate(Variable = as.character(Variable)) %>%
+  mutate(V1 = as.character(V1)) %>%
+  separate(
+    V1,
+    into = c('Observation', 'Unique', 'Duplicate', 'Missing'),
+    sep = ','
+  ) %>%
+  mutate(Observation = str_remove_all(Observation, "c\\(")) %>%
+  mutate(Missing = str_remove_all(Missing, "\\)"))
+
+zillow_dq[2:5] <- lapply(zillow_dq[2:5], as.numeric)
+
+#print table in nicer format when knitting in markdown file
+kable(zillow_dq, caption = "Zillow Regular Variable Quality")
+
+#dataframe with missing time-series data in zillow
+
+zillow_time_var <- miss_var_summary(zillow[8:262]) %>%
+  mutate(variable = substr(variable, 2, 8)) %>%
+  mutate(variable = ymd(paste0(year_month = variable, day = "01")))
+
+zillow_time_series_miss_pct <- ggplot(zillow_time_var) +
+  geom_line(aes(x = variable, y = pct_miss)) +
+  scale_y_continuous(labels = function(y)paste0(y, "%")) +
+  labs(x = 'Year', y = 'Percentage_Miss') +
+  ggtitle("Zillow Time Series Data Missing Over Time: 1996-2017")
+
+zillow_time_series_miss_pct
+
+```
+
+
+
+
+### Data Munging
+
+**Action**
+
+  -Filtered airbnb dataset with bedrooms=2 to select 2-bedroom properties
+  
+  -Computed airbnb dataset missing zipcode with mode
+  
+  -Write function to impute mode, function name: **Mode**
+  
+  -Filtered zillow dataset with state='NY'
+  
+  -Inner joined two data using zipcode to filter properties with revenue and costs
+  
+  -Paste longitude and latitude to new variable geolocation, prepare for more accurate graph
+  
+  -Converted price and zipcode to correct data type (numeric and factor)
+  
+  -Observed general profit situation in large regions
+
+***
+&nbsp;
+Looking at the boxplot, Manhattan seems to have higher median daily prices compare with others. Mean prices do not seem to differ a lot across all regions. Bronx and Staten Island have largest spread, indicating unstable revenue in these two regions.
+```{r impute zipcode and join datasets, warning=FALSE, message=FALSE}
+
+#new df for new york 2-bedroom properties
+airbnb_2b <- airbnb %>%
+  filter(bedrooms==2)
+
+#some zipcodes are 9 digits, convert to 5
+#convert data type, price as numeric and zipcode as factor for later computation and graph
+airbnb_2b <- airbnb_2b %>%
+  mutate(price=as.numeric(price))%>%
+  mutate(zipcode=substr(zipcode,1,5))
+
+#write function to generate mode for later missing value imputation
+Mode <- function(x, na.rm = FALSE) {
+  if(na.rm){
+    x = x[!is.na(x)]
+  }
+  i <- unique(x)
+  return(i[which.max(tabulate(match(x, i)))])
+}
+
+  #using neighbourhood cleansed data to clean the zipcode
+airbnb_neighborhood_summary <- airbnb_2b%>%
+  group_by(neighbourhood_group_cleansed,neighbourhood_cleansed)%>%
+  dplyr::summarise(Meanprice = mean(price),
+          Medianprice = median(price),
+          Max = max(price),
+          Min = min(price),
+          zipcode=Mode(zipcode)) 
+
+#impute missing value based on neighbourhood_cleansed match from summary statistics
+airbnb_2b$zipcode[is.na(airbnb_2b$zipcode)] <-
+  airbnb_neighborhood_summary$zipcode[match(
+    airbnb_2b$neighbourhood_cleansed,
+    airbnb_neighborhood_summary$neighbourhood_cleansed
+  )][which(is.na(airbnb_2b$zipcode))]
+
+
+#observe mean and median price in each neighborhood
+mean_price_neighborhood<- ggplot(airbnb_2b, aes(x=neighbourhood_group_cleansed, y=price, col=neighbourhood_group_cleansed))+
+  geom_boxplot()+
+  stat_summary(fun.y=mean, geom="point", shape=23, size=4)+
+  labs(x = "Neighborhood", y= "Price (Daily)")+
+  theme(legend.position="bottom")+
+  ggtitle("Daily Revenue Distribution in Large Neighborhood")
+
+mean_price_neighborhood
+
+```
+
+
+
+  One Of the most important variable is zipcode information. In the airbnb dataset, there are 200 unique value for zipcode, and 8946 unique value in zillow dataset. However, after joining them, only 25 zipcode left with information about revenue and costs. Looking at the most recent cost information in zillow dataset (variable X2017.6), there is no missing value in this variable. I assume this variable is the most recent cost information and will use it for later analysis.
+
+```{r complete dataset join and inspection, warning=FALSE, message=FALSE}
+
+#subset zillow dataset with only NY properties
+zillow_ny <- zillow %>%
+  filter(State=='NY')
+
+#convert data type
+zillow_ny<-zillow_ny %>%
+  mutate(RegionName=as.factor(RegionName))
+
+#join two dataset, match with only properties in NYC
+complete<-airbnb_2b %>%
+  inner_join(zillow_ny, by=c('zipcode'='RegionName'))
+
+#observe whether there's any missing value in the most recent property prices
+sum(is.na(as.array(complete$X2017.06)))
+
+#remove the dollar sign for prices for later computation
+complete<- complete %>%
+  mutate(price=as.numeric(gsub("[\\$,]", "", price)))%>%
+  mutate(weekly_price=as.numeric(gsub("[\\$,]", "", weekly_price)))%>%
+  mutate(monthly_price=as.numeric(gsub("[\\$,]", "", monthly_price)))
+
+
+#zipcode 10013 has locations in both Brooklyn and Manhattan, past zipcode and cleansed neighbourhood to create new variable to identify zipcodes and locations
+complete<- complete%>%
+  mutate(zipcode_area= paste(zipcode,neighbourhood_group_cleansed, sep="-"))%>%
+  mutate(geolocation= paste(longitude,latitude, sep=","))%>%
+  mutate(yearly_revenue_day=price*365*0.75)
+
+#observe several variables for their unique and duplicate value
+  #choose variables to observe
+complete_dq<- complete%>%
+  dplyr::select(zipcode, price, weekly_price, monthly_price, neighbourhood_cleansed, neighbourhood_group_cleansed, state, bedrooms)
+
+  #apply observe function to multiple variables
+complete_dq<-as.data.frame(cbind(map(complete_dq[1:8],observe_var)))
+  
+  #clean lists and convert all numbers to numeric format
+complete_dq<- complete_dq %>%
+  add_rownames(var = "Variable")%>%
+  mutate(Variable=as.character(Variable))%>%
+  mutate(V1=as.character(V1))%>%
+  separate(V1, into = c('Observation', 'Unique', 'Duplicate','Missing'), sep=',')%>%
+  mutate(Observation=str_remove_all(Observation,"c\\("))%>%
+  mutate(Missing=str_remove_all(Missing,"\\)"))
+
+complete_dq[2:5] <- lapply(complete_dq[2:5], as.numeric)
+
+#print table in nicer format when knitting in markdown file
+kable(complete_dq,caption = "Merged Dataset Related Variable Quality Check")
+```
+
+
+### Analytics and Visualization
+
+The problem states that the goal is to find the most profitable zipcode for short-term 2-bedroom properties investment. So I broke down the problem into two scenario
+
+*extremely short-term that cannot break-even: such as 2 years or 5 years, zipcodes need to be decided by looking at sample size and pure revenue
+
+*short-term but can break-even: zipcodes need to be decided by calculating break-even/ payback period and looking at sample size to determine the validity and reliability of the result
+
+
+&nbsp;
+&nbsp;
+
+***
+
+**Assumptions**
+
+-All price data is accurate
+
+-The occupancy rate is 75% across all properties
+
+-The cost data contains the most recent cost, which is property cost in June 2017.
+
+-The investor will pay for the property in cash 
+
+-The time value of money discount rate is 0% 
+
+-All properties and all square feet within each locale can be assumed to be homogeneous 
+
+
+&nbsp;
+
+**Major Calculations**
+  
+  -Monthly Revenue: there are some observations with existing discounted monthly revenue, but most monthly charge is missing. For the missing values, I computed using discounted weekly revenue to compute monthly revenue. I assume every month has 30 days and the formula I used is *Monthly Revenue= $\frac{Weekly_Price)}{7}\times 30$*. For observation only has daily price, I computed monthly revenue with formula *Monthly Revenue=$30 \times price$*
+
+  -Yearly revenue: I used two approaches to calculate annual revenue. First, I only use daily price and multiple by 365 days and occupancy rate (given at 75%). Second, I use discounted monthly prices and discounted weekly prices to calculate annual revenue, and when both variables are absent, I use daily price. After comparing the two results, I chose to use the second approach for conservative consideration.
+  
+  *Yearly Revenue= $Monthly Revenue\times 12\times Occupancy Rate$*
+  
+  -Break-even Year: with the assumption that the cost data (zillow) is the most recent and accurate, I used the formula Break-even year= Revenue/ Costs to calculate the break-even time. With the variables available, the formula is X2017.6/Yearly Revenue.
+  
+  *Break-even Year= $\frac{2017.6 (Cost)}{YearlyRevenue}$*
+  
+  -Return Rate: 1/Break-even Year
+  
+  *Return Rate= $\frac{1}{Breakeven Year}$*
+
+&nbsp;
+  
+**Calculation and Graphing Manipulation**
+
+  -Median vs Mean: I calculated median and mean prices for one zipcode if the zipcode has multiple properties. However, becasue the price range can be very large (as we observed), I used median as the final result and visualization
+  
+  -Wrote function for grid manipulation with combining two graphs horizontally, function name: **g_legend**
+  
+***
+
+After getting familiarize with the data, I first try to observe the quantity of properties located in each area. Then I made an interactive map to show the quantity of properties located in respective area and the heat layer for daily revenue.
+
+Let's first see how many samples we have in each region. The reference line indicates the zipcode has at least 2 properties. Looking at the graph, it seems some zipcodes have only one property, which weakens the reliability for our calculation as we will group by zipcode. So I filtered the dataset to remove zipcodes with only one property.
+
+The quantity of property will also be applied to later analysis as transparency to other graphs.
+
+```{r observe property quantity, warning=FALSE, message=FALSE}
+#graph to observe property quantities in each region
+property_quantity<- ggplot(complete, aes(x=zipcode_area, fill=neighbourhood_group_cleansed))+
+  geom_bar()+
+  geom_text(stat='count',aes(label=..count..),vjust=-1)+
+  geom_hline(yintercept = 2)+
+  scale_y_continuous(limits = c(0,220))+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+  theme(legend.position="bottom")+
+  xlab("Zipcode_Area")+
+  ylab("Quantity")+
+  ggtitle("NYC Property Distribution")
+
+property_quantity
+
+#remove zipcode only appeared once for validation consideration
+complete <- complete %>%
+  group_by(zipcode)%>%
+  filter(n()>1)
+```
+
+
+Below is an interactive map for all 2-bedroom properties in New York City, and please zoom in or zoom out to see the quantity and click any blue marker after you zoom in to see the daily revenue in corresponding region. The cluster numbers indicate how many properties there are in the corresponding area and the heatmap shows which region clusters have highest daily revenue. 
+
+
+```{r property distribution interactive map, warning = FALSE, message=FALSE, include=FALSE}
+
+#interactive map using leaflet package for new york city, to visually show the quantity of proproties in each area
+register_google(key = YOUR KEY,write = TRUE)
+
+
+#interactive map using leaflet package for new york city, to visually show the quantity of proproties in each area
+mymap <- leaflet(height = 300) %>%
+  addTiles() %>%
+  setView(lng = -74.00597	, lat = 40.71278, zoom = 11)
+
+coords <- cbind(complete$longitude, complete$latitude)
+# Turn these coords into points
+sp <- SpatialPoints(coords)
+#Rejoin these points to the original data
+spdf <- SpatialPointsDataFrame(coords, complete) 
+
+
+# add markers and cluster
+myproperties <- mymap %>% 
+  addMarkers(data=spdf, popup= spdf$price, clusterOptions = markerClusterOptions()) %>%
+  addHeatmap(data=spdf, intensity = spdf$price,
+             blur = 35, max = 100, radius = 15)
+
+#heatmap and distribution of all properties on map, the higher the heat, the higher the revenue. The numbers represent the property quantities in the area
+myproperties
+
+#save interactive map as html file to local machine
+saveWidget(myproperties, file="myproperties.html")
+
+```
+&nbsp;
+&nbsp;
+As both graphs show, Manhattan has the most properties and highest median daily revenues. So for extremely short-term investment such as 2-year investment that does not need to consider break-even, Manhattan can be a good choice. Let's look at the revenue and sample size by zipcodes to see whether this conclusion is correct.
+
+***
+  We have a general concept for the quantity and prices in each regions, we can now observe the price change trend for each region. But let's first finish calculating annual revenue and break-even point using the formula I mentioned earlier in the report.
+
+```{r observe cost and revenue in large neighbourhoods, warning=FALSE, message=FALSE}
+
+#subset for final dataset, removing all text and unrelated variables
+FinalData <- complete %>%
+  dplyr::select(id,neighbourhood_cleansed,neighbourhood_group_cleansed,
+                   zipcode,geolocation,price,weekly_price,
+                   monthly_price,X2017.06, zipcode_area, yearly_revenue_day)
+
+#mutate yearly revenue by two different methods: 1. by daily price 2. add discount prices, observe result
+FinalData <- FinalData %>%
+  mutate(revenue_price_month = as.numeric(ifelse(
+    !is.na(monthly_price),
+    monthly_price,
+    ifelse(
+      is.na(monthly_price) & !is.na(weekly_price),
+      weekly_price / 7 * 30,
+      ifelse(is.na(monthly_price) &
+               is.na(weekly_price), price * 30, "no")
+    )
+  ))) %>%
+  mutate(yearly_revenue_month = revenue_price_month * 12 * 0.75)
+
+```
+
+
+Now that we have already calculated the break even costs, let's compare the pure annual revenue by zipcodes. The colors on the graph represent different neighborhoods, and the transparency indicates the sample size. The more solid the color, the more sample size the represented zipcode has, in other words, the less risk it is for the investors.
+
+
+```{r extreme short-term, warning=FALSE, message=FALSE}
+#summary table for pure revenue and count property amount in one zipcode
+ExtremeShortTermSummary<- FinalData %>%
+  group_by(zipcode_area, neighbourhood_group_cleansed)%>%
+  dplyr::summarise(revenue=round(median(yearly_revenue_month),1),
+                   count=n())
+
+# visualize for extreme short-term investment zipcode, length of bars indicates revenue and tranparency shows the quantity of properties in corresponding zipcodes; adjust legends to be parallel and stay in bottom left
+  #Transparency (alpha) is set as property zipcode appeared frequency showed in each group (Manhattan, Brooklyn, Staten Island and Queens)
+ExtremeShortTermInvestment<- ggplot(ExtremeShortTermSummary, aes(reorder(zipcode_area,revenue), revenue/1000))+
+  geom_bar(stat = "identity", aes(fill=neighbourhood_group_cleansed, alpha=count))+
+  labs(x='Zipcode', y= 'Annual Revenue (Thousands)')+
+  geom_text(aes(label=paste('$',round(revenue/1000,1),sep=''), col=neighbourhood_group_cleansed),
+            position=position_dodge(width=0.5),hjust=-0.25, size=3)+
+  scale_y_continuous(labels = function(y) paste0("$",y), limits = c(0,200))+ 
+  theme(legend.justification = 'left', 
+        legend.position = 'bottom', legend.box = 'vertical', 
+        legend.box.just = 'left')+
+  coord_flip()+
+  ggtitle("Extreme Short-term Investment Option (<5 years)")
+
+ExtremeShortTermInvestment
+
+save_plot("ExtremeShortTermInvestment.png",ExtremeShortTermInvestment,base_height = 7, base_width = 8)
+
+
+```
+
+We can see that even though Staten Island has two zipcodes that generate lots of revenue, their bars are too transparent, meaning that they have very few samples available for us, which makes their result less convincible. Most zipcodes that generate most annual revenue comes from Manhattan area. Looking at annual revenue and sample size, we conclude that **zipcode 10036, 10011, 10013** in Manhattan are our top choices for extremely short-term investment
+
+Although properties in Manhattan can be generate higher revenue, they may also come with higher costs. If investors plan to invest a longer time period such as 10 years, we need to think about break-even problem. So now let's look at the comparison of revenue and costs by zipcodes.
+
+```{r revenue vs cost, warning=FALSE, message=FALSE}
+
+#summarise complete dataset to find median prices for each neighbourhood, make line chart to show property costs by region
+complete_group_price<- complete %>%
+  group_by(neighbourhood_group_cleansed)%>%
+  summarise_if(is.numeric, median, na.rm=TRUE)%>%
+  gather(key='year_month', value='property_price', X1996.04:X2017.06)
+
+  #clean the date variables
+complete_group_price <- complete_group_price %>%
+  mutate(year_month= substr(year_month,2,8))%>%
+  mutate(year_month= ymd(paste0(year_month = year_month, day = "01")))
+
+#costs in different regions over years
+PriceChangeByRegion<- ggplot(complete_group_price, aes(x=year_month, y=(property_price/1000)))+
+  geom_line(aes(col=neighbourhood_group_cleansed, linetype=neighbourhood_group_cleansed))+
+  theme(legend.position="bottom")+
+  labs(x='Year', y= 'Property Costs (Thousands)')+
+  scale_y_continuous(labels = function(y) paste0("$",y))+
+  ggtitle("Price Trend in Large Neighborhood: 1996-2017")
+
+PriceChangeByRegion
+ggsave("PriceChangeByRegion.png")
+save_plot("PriceChangeByRegion.png",PriceChangeByRegion,base_height = 6, base_width = 8)
+
+#break-even based on last available data point
+FinalData<- FinalData %>%
+  mutate(break_even_year_basedonmonth= round(X2017.06/(yearly_revenue_month),1))%>%
+  mutate(break_even_year_basedonday=round(X2017.06/yearly_revenue_day,digits=1))
+
+#summary table to observe median of break-even year and to prepare data for later   visualization
+  #mutate frequency and proportional frequency for zipcode and location information   within each group
+BreakEvenSummary <- FinalData%>%
+group_by(neighbourhood_group_cleansed,zipcode_area)%>%
+  dplyr::summarise(geolocation=Mode(geolocation),
+                   MeanBreakEven = round(mean(break_even_year_basedonmonth),1),
+                   Median = round(median(break_even_year_basedonmonth),1),
+                   yearly_median_revenue=round(median(yearly_revenue_month)/1000,1),
+                   yearly_mean_revenue=round(mean(yearly_revenue_month)/1000,1),
+                   Freq = n(),
+                   cost=mean(X2017.06)/1000)%>%
+  dplyr::mutate(freq_percent = Freq/sum(Freq))
+
+#revenue by zipcode and neighborhood
+RevenueByZipcode<- ggplot(BreakEvenSummary, aes(x=reorder(zipcode_area,yearly_median_revenue), y=yearly_median_revenue))+
+  geom_bar(stat='identity', aes(fill=neighbourhood_group_cleansed))+
+  geom_text(aes(label=paste("$",yearly_median_revenue,sep='')), colour="white", hjust=1,size=3) +
+  theme(legend.position="bottom")+
+  labs(x='Zipcode', y= 'Yearly_Revenue (Thousands)')+
+  scale_y_continuous(labels = function(y) paste0(y, "$"))+
+  coord_flip()
+
+#cost by zipcode and neighborhood
+CostByZipcode<- ggplot(BreakEvenSummary, aes(x=reorder(zipcode_area,yearly_median_revenue), y=cost))+
+  geom_bar(stat='identity', aes(fill=neighbourhood_group_cleansed))+
+  geom_text(aes(label=ifelse(cost>100,paste0("$", round(cost,1)),"")), colour="white", hjust=1, size=3) +
+  theme(legend.position="bottom")+
+  labs(y= 'Property_Cost (Thousands)')+
+  scale_y_continuous(labels = function(y) paste0(y, "$"))+
+  theme(
+        legend.justification = 'left', 
+        legend.position = 'bottom', legend.box = 'vertical', 
+        legend.box.just = 'left')+
+  coord_flip()+
+  theme(axis.title.y=element_blank(),
+        axis.text.y=element_blank(),
+        axis.ticks.y=element_blank())
+
+#function to extract legend
+g_legend<-function(a.gplot){
+  tmp <- ggplot_gtable(ggplot_build(a.gplot))
+  leg <- which(sapply(tmp$grobs, function(x) x$name) == "guide-box")
+  legend <- tmp$grobs[[leg]]
+  return(legend)}
+
+mylegend<-g_legend(CostByZipcode)
+
+#combine two graph together to compare revenue and cost by zipcode, delete both legend, and leave one unified legend
+RevenueVSCost <- grid.arrange(arrangeGrob(RevenueByZipcode +
+                                            theme(legend.position="none"),
+                                          CostByZipcode +
+                                            theme(legend.position="none"),
+                                          nrow=1,
+                                          top = textGrob("Annual Revenue vs Costs")),
+                              mylegend, nrow=2,heights=c(6, 1))
+
+```
+  
+  
+  In general, higher revenue do come with higher costs, but there are several zipcodes that seem to have a higher return rate than others. In the break-even graph below, the transparency represents the property quantities, the deeper the color, the more properties locate in the zipcode, which makes our result more reliable. The return rate graph shows corresponding return rate for the zipcodes respectively.
+  I limited that break-even year within 50 years because we are focusing to solve problem for short-term investment, and investments require more than 50 years to break-even do not qualify for short-term. I also limited the return rate in the range of 0-0.15 because the only zipcode that's not in this range is 10314, and this zipcode has only 2 observations, which is not a very convincible sample size. To make the visualization and comparison clearer, I also excluded this zipcode in this graph. 
+
+```{r calculating break-even/ payback period, warning=FALSE, message=FALSE}
+
+#payback year, regular short-term so limit break-even year in 50 years. Transparency (alpha) is set as property zipcode appeared frequency showed in each group (Manhattan, Brooklyn, Staten Island and Queens)
+  #Among all zipcodes, zipcode 11434 and 10305 has relatively low payback year and most properties in their regions respectively, meaning shorter time to break even and cover costs and lower risks.
+BreakEvenYear<- ggplot(BreakEvenSummary, aes(x=reorder(zipcode_area,-MeanBreakEven),
+                      y=MeanBreakEven,
+                      fill=neighbourhood_group_cleansed,
+                      group=neighbourhood_group_cleansed,
+                      alpha=freq_percent
+                      ))+
+  geom_bar(stat = "identity")+
+  geom_text(aes(label=MeanBreakEven, alpha=1,col=neighbourhood_group_cleansed), position=position_dodge(width=0.5),hjust=-0.25, size=3)+
+  scale_alpha(range=c(0.3,1))+
+  scale_y_continuous(limits=c(0,100))+
+  coord_flip()+
+  labs(x = "Zipcode_Area", y= "Break-even Year")+
+  theme(legend.justification = 'left', 
+        legend.position = 'bottom', legend.box = 'vertical', 
+        legend.box.just = 'left')
+
+
+#plot return rate in the same order with break-even year
+ReturnRate<- ggplot(BreakEvenSummary, aes(x=reorder(zipcode_area,-MeanBreakEven),
+                      y=1/MeanBreakEven,col=neighbourhood_group_cleansed
+                      ))+
+  geom_point()+
+  geom_text(aes(label=paste(round(1/MeanBreakEven*100,1),'%', sep='')),position=position_dodge(width=0.5),hjust=-0.25, size=3)+
+  theme(legend.position="bottom")+
+  scale_y_continuous(limits = c(0,0.15))+
+  coord_flip()+
+  labs(y='Annual Return Rate')+
+  theme(axis.title.y=element_blank(),
+        axis.text.y=element_blank(),
+        axis.ticks.y=element_blank())
+
+mylegend<-g_legend(BreakEvenYear)
+
+#combine two graph together to compare revenue and cost by zipcode, delete both legend, and leave one unified legend
+
+BreakEvenYear_Return <- grid.arrange(arrangeGrob(BreakEvenYear +
+                                            theme(legend.position="none"),
+                                          ReturnRate +
+                                            theme(legend.position="none"),
+                                          nrow=1,top = textGrob("Break-even and Return Rate")),
+                              mylegend, nrow=2,heights=c(4, 1))
+
+```
+
+  Among all zipcodes, zipcode 11434 and 10305 have short bar and more solid color in the graph. It means these two zipcodes have relatively low payback time as well as relatively large amount of properties listed in their regions, which indicates shorter time for the investors to cover the costs and lower risks.
+&nbsp;
+  For investments that can break-even, we also need to observe and consider the price trends for the properties. Because 1. we do not want to see a huge deflation of the properties over years because we don't want the invested properties' price to deflate after years when the investors want to sell them, and 2. we do not want the price change to be too volatile, which indicates higher risk. 
+&nbsp;
+  Let's observe the price change trends for the top 10 profitable zipcodes.
+
+```{r observe top ten prices changes over years, warning=FALSE,message=FALSE}
+
+#select top 10 zipcode
+top10zipcode<- head(arrange(BreakEvenSummary,Median), n = 10) 
+
+top10zipcode <-top10zipcode %>%
+  separate(zipcode_area, into=c('zipcode', 'region'), sep='-') %>%
+  mutate(zipcode=as.factor(zipcode))
+
+#summary cost table to get properties cost data over years
+zillow_summary<- zillow_ny %>%
+  dplyr::group_by(RegionName)%>%
+  dplyr::summarise_if(is.numeric, median, na.rm=TRUE) %>%
+  dplyr::mutate(RegionName=as.factor(RegionName))
+
+#join top tables to get top 10 zipcode properties median prices change over years
+top10zipcode_price <- top10zipcode %>%
+  left_join(zillow_summary, by=c('zipcode'='RegionName'))
+
+#clean the dataset and prepare for later graph
+top10zipcode_price <- top10zipcode_price %>%
+  gather(key='year_month', value='property_price', X1996.04:X2017.06)%>%
+  mutate(year_month= substr(year_month,2,8))%>%
+  mutate(year_month= ymd(paste0(year_month = year_month, day = "01")))
+
+top10zipcode_price_s2 <- top10zipcode_price %>%
+  dplyr::group_by(neighbourhood_group_cleansed,zipcode, year_month)%>%
+  dplyr::summarise(property_price=median(property_price),
+                   geolocation=Mode(geolocation),
+                   yearly_revenue=Mode(yearly_median_revenue),
+                   MeanBreakEven=median(MeanBreakEven))
+  
+
+
+#line chart to display price change trend, most zipcodes follow the same trend
+topzipcode_costtrend<-ggplot(top10zipcode_price_s2, aes(x=year_month, y=property_price/1000))+
+  geom_line(aes(col=zipcode))+
+  theme(legend.position="bottom")+
+  guides(fill=guide_legend(nrow=3,byrow=TRUE))+
+  labs(x= 'Year', y= 'Property_Cost (Thousands)')+
+  scale_y_continuous(labels = function(y) paste0(y, "$"))+
+  ggtitle("Top Zipcodes Price Change Trend: 1996-2017")
+
+topzipcode_costtrend
+
+```
+
+&nbsp;
+  It seems that all properties follow a general trend and do not have significant outlier zipcodes. So zipcodes **11434 and 10305** are our final choice for regular short-term investment. Two zipcodes, 10303 in Brooklyn and 10025 in Manhattan seems to have a more volatile trend and have a higher cost for investors.
+
+***
+
+### Conclusion and Future Considerations
+
+**Conclusion**
+
+-Costs are relatively consistent across years for all zipcodes, though Manhattan area is slightly more volatile than those of others. Zipcodes with too few observations are not considered as optimal choice because we may face higher risks with too few observations.
+
+-For **extremely short-term investment (<5 years)** that cannot break-even, and if investors value more in net revenue, invest in Manhattan area because it has the highest annual revenue and the investment can generate largest revenue without considering the costs. The final zipcode location is **zipcode 10036, 10011, 10013**. However, the investment cost could be very high and if investors are very sensitive to the total dollar amount they invest, they should look at the regular short-term investment option
+
+-For **regular short-term investment** that has longer time period and can break-even, invest in zipcode **11434** and **10305** because they have short break-even year, high return rate and relative large sample size (lower risks)
+&nbsp;
+
+The graph below shows the top 10 zipcodes' geographic locations for regular short-term investment, and the two red dots are our final optimal choices.
+
+
+```{r zipcode viz , warning=FALSE, message=FALSE}
+#add final judgement as new variable 'final', 11434 and 10305 are optimal choices, other marked as "TBD"
+top10zipcode<- top10zipcode %>%
+  mutate(final=ifelse(zipcode=='11434', 'FirstOptimal',
+                             ifelse(zipcode=='10305', 'SecondOptimal', "TBD")))%>%
+  mutate(Extreme=(zipcode=='10036'))%>%
+  separate(geolocation, into=c('longitude', 'latitude'), sep=',')
+
+top10zipcode<- top10zipcode %>%
+  mutate(longitude=as.numeric(longitude))%>%
+  mutate(latitude=as.numeric(latitude))
+  
+
+nyc_map<- get_map("new york city", maptype = "terrain", zoom=10)
+FinalZipcodes<- ggmap(nyc_map)+
+  geom_point(data = subset(top10zipcode,final == "TBD"), aes(x=longitude, y=latitude,colour="red"),na.rm = T)+
+  geom_point(data = subset(top10zipcode,final == "SecondOptimal"), aes(x=longitude, y=latitude,colour="green", size=8),na.rm = T)+
+  geom_point(data = subset(top10zipcode,final == "FirstOptimal"), aes(x=longitude, y=latitude,colour="green", size=8),na.rm = T)+
+  geom_point(data = subset(top10zipcode,Extreme), aes(x=longitude, y=latitude,colour="Orange", size=8),na.rm = T)+
+  geom_text_repel(aes(longitude, latitude, label=zipcode),data=top10zipcode,size=2,fontface = 'bold')+
+  theme(legend.position="none")+
+  ggtitle("Investment Location")+
+  labs(x= 'Longitutde', y='Latitude')
+
+FinalZipcodes
+
+ggsave("FinalZipcodes.png")
+
+```
+
+
+
+&nbsp;
+**Future Considerations**
+
+-The most recent data for cost ends in 2017/06 where as revenue data was updated in 2019. For a more accurate current market consideration, we can collect cost data in 2018 and 2019 if available. If the cost data's absent, we can then build a regression model or use other statistical methods to predict costs in 2019.
+
+-New occupancy rate can be calculated using reviews and other criteria. I used the 75% as it is, but higher review rate could indicate higher popularity of the properties. So properties with higher review rate can have higher occupancy rate and vice versa.
+
+-After joining these two datasets, only 25 among all 8,946 zipcodes in the New York City has complete cost and revenue data. Collect more data can be very helpful for our analysis and to examine the validity of the result.
+
+-Collect data about the importance of property quantity and break-even year/ return rate. The recommendation is based on mix of both break-even year and available property quantity for risk considerations. If weights for quantity and return rate are available, we can further validate the result.
+
+-Variable Cost Data Collection: the break-even calculation is based on all costs are fixed costs, which is the cost to purchase the properties, and the variable costs such as maintenance is unknown. If variable costs information is available, then it can further enhance the analysis.
+
+-Traffic and City Planning Data Collection: traffic can heavily influence popularity and rent for properties, especially in metropolitan such as new york. If there's additional information about traffic situation and future city planning data and weight, we can incorporate these information into analysis.
+
